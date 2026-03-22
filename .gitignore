@@ -2,3 +2,12 @@ node_modules/
 dist/
 refer/
 .DS_Store
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
