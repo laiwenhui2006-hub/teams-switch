@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fetchUsageMetadata } from "./config.js";
+import {
+  deriveAccountValidity,
+  fetchUsageMetadata,
+  findNextEligibleAccountIndex,
+  getQuotaShortageWindow,
+  type Account,
+} from "./config.js";
 
 interface MockQuotaWindow {
   used_percent: number;
@@ -34,6 +40,22 @@ async function withMockedFetch(
   } finally {
     globalThis.fetch = originalFetch;
   }
+}
+
+function createAccount(overrides: Partial<Account> = {}): Account {
+  return {
+    id: overrides.id ?? "acct",
+    accessToken: overrides.accessToken ?? "token",
+    addedAt: overrides.addedAt ?? 0,
+    isValid: overrides.isValid ?? true,
+    isBanned: overrides.isBanned,
+    quota: overrides.quota,
+    refreshToken: overrides.refreshToken,
+    accountId: overrides.accountId,
+    expiresAt: overrides.expiresAt,
+    email: overrides.email,
+    planType: overrides.planType,
+  };
 }
 
 test("fetchUsageMetadata maps a free single quota window to weekly", async () => {
@@ -93,4 +115,51 @@ test("fetchUsageMetadata keeps two-window ordering based on window size", async 
       assert.equal(metadata?.quota?.weekly?.limitWindowSeconds, 604800);
     },
   );
+});
+
+test("getQuotaShortageWindow prioritizes weekly before hourly when both are below 5 percent", () => {
+  const account = createAccount({
+    quota: {
+      weekly: { remainingPercent: 4, resetAt: 1_900_000_000, limitWindowSeconds: 604800 },
+      hourly: { remainingPercent: 3, resetAt: 1_900_000_100, limitWindowSeconds: 18000 },
+    },
+  });
+
+  assert.equal(getQuotaShortageWindow(account), "weekly");
+  assert.equal(deriveAccountValidity(account), false);
+});
+
+test("findNextEligibleAccountIndex picks the next valid account instead of the healthiest later account", () => {
+  const accounts = [
+    createAccount({
+      id: "acct-current",
+      quota: {
+        weekly: { remainingPercent: 80, resetAt: 1_900_000_000, limitWindowSeconds: 604800 },
+        hourly: { remainingPercent: 80, resetAt: 1_900_000_100, limitWindowSeconds: 18000 },
+      },
+    }),
+    createAccount({
+      id: "acct-weekly-low",
+      quota: {
+        weekly: { remainingPercent: 4, resetAt: 1_900_000_200, limitWindowSeconds: 604800 },
+        hourly: { remainingPercent: 95, resetAt: 1_900_000_300, limitWindowSeconds: 18000 },
+      },
+    }),
+    createAccount({
+      id: "acct-next-ok",
+      quota: {
+        weekly: { remainingPercent: 8, resetAt: 1_900_000_400, limitWindowSeconds: 604800 },
+        hourly: { remainingPercent: 6, resetAt: 1_900_000_500, limitWindowSeconds: 18000 },
+      },
+    }),
+    createAccount({
+      id: "acct-healthiest-later",
+      quota: {
+        weekly: { remainingPercent: 90, resetAt: 1_900_000_600, limitWindowSeconds: 604800 },
+        hourly: { remainingPercent: 90, resetAt: 1_900_000_700, limitWindowSeconds: 18000 },
+      },
+    }),
+  ];
+
+  assert.equal(findNextEligibleAccountIndex(accounts, 0), 2);
 });

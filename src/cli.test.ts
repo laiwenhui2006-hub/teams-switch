@@ -120,3 +120,57 @@ test("switch command skips accounts below the 5 percent quota threshold", async 
 
   assert.match(stdout, /已手动切换至账号: acct-ok/);
 });
+
+test("switch command treats weekly below 5 percent as ineligible and still picks the next eligible account", async () => {
+  const { stdout } = await runCliWithConfig({
+    config: {
+      currentIndex: 0,
+      lastSwitchTime: 0,
+      accounts: [
+        {
+          id: "acct-current",
+          accessToken: "token-current",
+          addedAt: 0,
+          isValid: true,
+          quota: {
+            weekly: { remainingPercent: 50, resetAt: 1900000000, limitWindowSeconds: 604800 },
+            hourly: { remainingPercent: 50, resetAt: 1900000100, limitWindowSeconds: 18000 },
+          },
+        },
+        {
+          id: "acct-weekly-low",
+          accessToken: "token-weekly-low",
+          addedAt: 0,
+          isValid: true,
+          quota: {
+            weekly: { remainingPercent: 4, resetAt: 1900000200, limitWindowSeconds: 604800 },
+            hourly: { remainingPercent: 99, resetAt: 1900000300, limitWindowSeconds: 18000 },
+          },
+        },
+        {
+          id: "acct-next-ok",
+          accessToken: "token-next-ok",
+          addedAt: 0,
+          isValid: true,
+          quota: {
+            weekly: { remainingPercent: 7, resetAt: 1900000400, limitWindowSeconds: 604800 },
+            hourly: { remainingPercent: 6, resetAt: 1900000500, limitWindowSeconds: 18000 },
+          },
+        },
+        {
+          id: "acct-healthiest-later",
+          accessToken: "token-healthiest-later",
+          addedAt: 0,
+          isValid: true,
+          quota: {
+            weekly: { remainingPercent: 90, resetAt: 1900000600, limitWindowSeconds: 604800 },
+            hourly: { remainingPercent: 90, resetAt: 1900000700, limitWindowSeconds: 18000 },
+          },
+        },
+      ],
+    },
+    args: ["switch"],
+  });
+
+  assert.match(stdout, /已手动切换至账号: acct-next-ok/);
+});

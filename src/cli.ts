@@ -2,6 +2,7 @@
 import {
   createAccountFromAuth,
   deriveAccountValidity,
+  findNextEligibleAccountIndex,
   loadConfig,
   readOpencodeAuth,
   saveConfig,
@@ -83,17 +84,6 @@ function renderAccountLine(account: Account, index: number, isActive: boolean): 
   }
 
   return `${headParts.join(" ")} : ${detailParts.join("  ")}`;
-}
-
-function findNextEligibleAccountIndex(accounts: Account[], currentIndex: number): number {
-  for (let offset = 1; offset < accounts.length; offset += 1) {
-    const nextIndex = (currentIndex + offset) % accounts.length;
-    if (deriveAccountValidity(accounts[nextIndex])) {
-      return nextIndex;
-    }
-  }
-
-  return -1;
 }
 
 async function main() {
