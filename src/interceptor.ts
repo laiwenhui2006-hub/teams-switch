@@ -1,3 +1,4 @@
+import { OpencodeClient } from "@opencode-ai/sdk";
 import {
   ensureFreshAccount,
   extractAccountIdFromAccessToken,
@@ -5,11 +6,29 @@ import {
   getQuotaShortageWindow,
   loadConfig,
   saveConfig,
+  syncAccountStatus,
 } from "./config.js";
 
 const CODEX_URL_PATTERN = "chatgpt.com/backend-api/codex";
 let originalFetch: typeof globalThis.fetch | null = null;
 let isIntercepting = false;
+let opencodeClient: OpencodeClient | null = null;
+
+function showNotification(message: string, variant: "info" | "success" | "warning" | "error" = "info", duration?: number) {
+  const cleanMsg = message.replace(/^\n+/, '');
+  console.log(`[Teams Switch] ${cleanMsg}`);
+  if (opencodeClient) {
+    opencodeClient.tui.showToast({
+      body: {
+        title: "Teams Switch",
+        message: cleanMsg,
+        variant,
+        duration
+      }
+    }).catch(() => {});
+  }
+}
+
 
 // 冷却时长常量
 const COOLDOWN_MIN_SEC = 60;
@@ -52,13 +71,39 @@ function markAccountAsBanned(accountId: string): void {
     acc.isBanned = true;
     acc.isValid = false;
     saveConfig(config);
-    console.log(`[Teams Switch] 账号 [${accountId}] 已被永久封禁，已从账号池中移除。`);
+    showNotification(`账号 [${accountId}] 已被永久封禁，已从账号池中移除。`, "error");
   }
 }
 
 /**
  * 获取当前生效账号的 Token（不做轮询，始终使用 currentIndex 指向的账号）
  */
+let requestCountSinceLastSync = 0;
+let targetRequestCount = 30 + Math.floor(Math.random() * 11);
+
+function maybeSyncQuotaInBackground(acc: any) {
+  requestCountSinceLastSync++;
+  if (requestCountSinceLastSync >= targetRequestCount) {
+    requestCountSinceLastSync = 0;
+    targetRequestCount = 30 + Math.floor(Math.random() * 11);
+    syncAccountStatus(acc, { forceRefreshQuota: true }).then((syncedAcc) => {
+      const freshConfig = loadConfig();
+      if (freshConfig.accounts.length > 0 && freshConfig.accounts[freshConfig.currentIndex]?.id === acc.id) {
+        freshConfig.accounts[freshConfig.currentIndex] = syncedAcc;
+        const shortage = getQuotaShortageWindow(syncedAcc);
+        if (shortage !== null) {
+          const nextIndex = findNextEligibleAccountIndex(freshConfig.accounts, freshConfig.currentIndex);
+          if (nextIndex !== -1) {
+            freshConfig.currentIndex = nextIndex;
+            showNotification(`后台检测到账号 [${syncedAcc.id}] ${shortage} 额度不足，提前切换至 [${freshConfig.accounts[nextIndex].id}]`, "info");
+          }
+        }
+        saveConfig(freshConfig);
+      }
+    }).catch(() => {});
+  }
+}
+
 async function getCurrentToken(): Promise<string | null> {
   const config = loadConfig();
   if (config.accounts.length === 0) return null;
@@ -74,9 +119,7 @@ async function getCurrentToken(): Promise<string | null> {
       if (nextIndex !== -1) {
         config.currentIndex = nextIndex;
         saveConfig(config);
-        console.log(
-          `\n[Teams Switch] 当前账号 [${refreshedAcc.id}] ${shortageWindow} 配额不足，提前切换至下一个可用账号 [${config.accounts[nextIndex].id}]`,
-        );
+        showNotification(`当前账号 [${refreshedAcc.id}] ${shortageWindow} 配额不足，提前切换至下一个可用账号 [${config.accounts[nextIndex].id}]`, "warning");
         return config.accounts[nextIndex].accessToken;
       }
     }
@@ -85,6 +128,8 @@ async function getCurrentToken(): Promise<string | null> {
       config.accounts[config.currentIndex] = refreshedAcc;
       saveConfig(config);
     }
+    
+    maybeSyncQuotaInBackground(refreshedAcc);
     return refreshedAcc.accessToken;
   }
   return null;
@@ -100,13 +145,13 @@ function drainCurrentAndSwitchNext(): string | null {
 
   const currentAcc = config.accounts[config.currentIndex];
   currentAcc.isValid = false;
-  console.log(`\n[Teams Switch] 账号 [${currentAcc.id}] 额度已耗尽，标记为不可用。`);
+  showNotification(`账号 [${currentAcc.id}] 额度已耗尽，标记为不可用。`, "error");
 
   const nextIndex = findNextEligibleAccountIndex(config.accounts, config.currentIndex);
   if (nextIndex !== -1) {
     config.currentIndex = nextIndex;
     saveConfig(config);
-    console.log(`[Teams Switch] 已切换至下一个可用账号: [${config.accounts[nextIndex].id}]`);
+    showNotification(`已切换至下一个可用账号: [${config.accounts[nextIndex].id}]`, "success");
     return config.accounts[nextIndex].accessToken;
   }
 
@@ -115,7 +160,8 @@ function drainCurrentAndSwitchNext(): string | null {
   return null;
 }
 
-export function setupInterceptor() {
+export function setupInterceptor(client?: OpencodeClient) {
+  if (client) opencodeClient = client;
   if (isIntercepting) return;
   
   originalFetch = globalThis.fetch;
@@ -138,7 +184,7 @@ export function setupInterceptor() {
 
     let currentToken = await getCurrentToken();
     if (!currentToken) {
-      console.log("\n[Teams Switch] 警告：所有账号均已耗尽！请使用 npx teams-switch add 补充新的授权。");
+      showNotification("警告：所有账号均已耗尽！请使用 npx teams-switch add 补充新的授权。", "error");
       return originalFetch(input, init);
     }
 
@@ -164,7 +210,7 @@ export function setupInterceptor() {
       const cooldown = randomCooldownMs();
       if (freshConfig.lastSwitchTime > 0 && (now - freshConfig.lastSwitchTime) < cooldown) {
         const remainSec = Math.ceil((cooldown - (now - freshConfig.lastSwitchTime)) / 1000);
-        console.log(`\n[Teams Switch] 冷却期中，${remainSec}秒后允许再次切换。本次请求直接返回原始响应。`);
+        showNotification(`冷却期中，${remainSec}秒后允许再次切换。本次请求直接返回原始响应。`, "warning");
         return response;
       }
 
@@ -178,7 +224,7 @@ export function setupInterceptor() {
           markAccountAsBanned(currentAcc.id);
           const nextToken = drainCurrentAndSwitchNext();
           if (!nextToken) {
-            console.log("[Teams Switch] 所有账号均已耗尽，无法切换。请补充新授权。");
+            showNotification("所有账号均已耗尽，无法切换。请补充新授权。", "error");
             return response;
           }
           // 标记切换时间并进入冷却
@@ -186,7 +232,7 @@ export function setupInterceptor() {
           afterBanConfig.lastSwitchTime = Date.now();
           saveConfig(afterBanConfig);
           const delaySec = COOLDOWN_MIN_SEC + Math.floor(Math.random() * (COOLDOWN_MAX_SEC - COOLDOWN_MIN_SEC + 1));
-          console.log(`[Teams Switch] 进入冷却期，等待 ${delaySec} 秒后使用新账号重传请求...`);
+          showNotification(`进入冷却期，等待 ${delaySec} 秒后使用新账号重传请求...`, "warning", delaySec * 1000);
           await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
           // 用新账号重传
           const retryInit = { ...init };
@@ -195,12 +241,12 @@ export function setupInterceptor() {
           const retryAcctId = extractAccountIdFromAccessToken(nextToken);
           if (retryAcctId) retryHeaders.set("chatgpt-account-id", retryAcctId);
           retryInit.headers = retryHeaders;
-          console.log("[Teams Switch] 冷却结束，正在使用新账号重传请求...");
+          showNotification("冷却结束，正在使用新账号重传请求...", "info");
           return originalFetch(input, retryInit);
         }
 
         // 非封号：尝试 refresh Token 一次
-        console.log(`\n[Teams Switch] 拦截到 401，尝试刷新 Token...`);
+        showNotification(`拦截到 401，尝试刷新 Token...`, "warning");
         const refreshedAcc = await ensureFreshAccount(freshConfig.accounts[freshConfig.currentIndex]);
         // 检查 refresh 后 Token 是否有效：用 refreshed Token 发一个轻量请求验证
         const verifyInit: RequestInit = { method: "GET" };
@@ -222,14 +268,14 @@ export function setupInterceptor() {
           markAccountAsBanned(currentAcc.id);
           const nextToken = drainCurrentAndSwitchNext();
           if (!nextToken) {
-            console.log("[Teams Switch] 所有账号均已耗尽，无法切换。请补充新授权。");
+            showNotification("所有账号均已耗尽，无法切换。请补充新授权。", "error");
             return response;
           }
           const afterBanConfig2 = loadConfig();
           afterBanConfig2.lastSwitchTime = Date.now();
           saveConfig(afterBanConfig2);
           const delaySec2 = COOLDOWN_MIN_SEC + Math.floor(Math.random() * (COOLDOWN_MAX_SEC - COOLDOWN_MIN_SEC + 1));
-          console.log(`[Teams Switch] Token 刷新后仍 401（疑似封号），进入 ${delaySec2}s 冷却...`);
+          showNotification(`Token 刷新后仍 401（疑似封号），进入 ${delaySec2}s 冷却...`, "error", delaySec2 * 1000);
           await new Promise(resolve => setTimeout(resolve, delaySec2 * 1000));
           const retryInit2 = { ...init };
           const retryHeaders2 = new Headers(init?.headers);
@@ -252,7 +298,7 @@ export function setupInterceptor() {
         const retryAcctId3 = extractAccountIdFromAccessToken(newToken);
         if (retryAcctId3) retryHeaders3.set("chatgpt-account-id", retryAcctId3);
         retryInit3.headers = retryHeaders3;
-        console.log("[Teams Switch] Token 刷新成功，使用新 Token 重传请求...");
+        showNotification("Token 刷新成功，使用新 Token 重传请求...", "success");
         return originalFetch(input, retryInit3);
       }
 
@@ -264,14 +310,14 @@ export function setupInterceptor() {
           markAccountAsBanned(currentAcc.id);
           const nextToken = drainCurrentAndSwitchNext();
           if (!nextToken) {
-            console.log("[Teams Switch] 所有账号均已耗尽，无法切换。请补充新授权。");
+            showNotification("所有账号均已耗尽，无法切换。请补充新授权。", "error");
             return response;
           }
           const afterBanConfig3 = loadConfig();
           afterBanConfig3.lastSwitchTime = Date.now();
           saveConfig(afterBanConfig3);
           const delaySec3 = COOLDOWN_MIN_SEC + Math.floor(Math.random() * (COOLDOWN_MAX_SEC - COOLDOWN_MIN_SEC + 1));
-          console.log(`[Teams Switch] Workspace 停用（402），进入 ${delaySec3}s 冷却后使用新账号重传...`);
+          showNotification(`Workspace 停用（402），进入 ${delaySec3}s 冷却后使用新账号重传...`, "error", delaySec3 * 1000);
           await new Promise(resolve => setTimeout(resolve, delaySec3 * 1000));
           const retryInit3b = { ...init };
           const retryHeaders3b = new Headers(init?.headers);
@@ -284,10 +330,10 @@ export function setupInterceptor() {
       }
 
       // ---------- 429: 额度耗尽或风控 ----------
-      console.log(`\n[Teams Switch] 拦截到错误 ${response.status}，当前账号额度已耗尽。`);
+      showNotification(`拦截到错误 ${response.status}，当前账号额度已耗尽。`, "warning");
       const nextToken = drainCurrentAndSwitchNext();
       if (!nextToken) {
-        console.log("[Teams Switch] 所有账号均已耗尽，无法切换。请补充新授权。");
+        showNotification("所有账号均已耗尽，无法切换。请补充新授权。", "error");
         return response;
       }
 
@@ -296,7 +342,7 @@ export function setupInterceptor() {
       updatedConfig.lastSwitchTime = Date.now();
       saveConfig(updatedConfig);
       const delaySec = COOLDOWN_MIN_SEC + Math.floor(Math.random() * (COOLDOWN_MAX_SEC - COOLDOWN_MIN_SEC + 1));
-      console.log(`[Teams Switch] 进入冷却期，等待 ${delaySec} 秒后使用新账号重传请求...`);
+      showNotification(`进入冷却期，等待 ${delaySec} 秒后使用新账号重传请求...`, "warning", delaySec * 1000);
       await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
 
       // 使用新 Token 构造重传请求
@@ -311,7 +357,7 @@ export function setupInterceptor() {
 
       retryInit.headers = retryHeaders;
 
-      console.log("[Teams Switch] 冷却结束，正在使用新账号重传请求...");
+      showNotification("冷却结束，正在使用新账号重传请求...", "info");
       return originalFetch(input, retryInit);
     }
 
