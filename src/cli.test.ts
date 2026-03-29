@@ -43,7 +43,7 @@ test("status command prints Weekly for a free weekly-only quota", async () => {
   const { stdout } = await runCliWithConfig({
     config: {
       currentIndex: 0,
-      lastSwitchTime: 0,
+      cooldownUntil: 0,
       accounts: [
         {
           id: "acct-1",
@@ -84,7 +84,7 @@ test("switch command skips accounts below the 5 percent quota threshold", async 
   const { stdout } = await runCliWithConfig({
     config: {
       currentIndex: 0,
-      lastSwitchTime: 0,
+      cooldownUntil: 0,
       accounts: [
         {
           id: "acct-current",
@@ -125,7 +125,7 @@ test("switch command treats weekly below 5 percent as ineligible and still picks
   const { stdout } = await runCliWithConfig({
     config: {
       currentIndex: 0,
-      lastSwitchTime: 0,
+      cooldownUntil: 0,
       accounts: [
         {
           id: "acct-current",

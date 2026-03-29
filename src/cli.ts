@@ -115,6 +115,20 @@ async function main() {
     config.accounts = await Promise.all(
       config.accounts.map((account) => syncAccountStatus(account, { forceRefreshQuota: true })),
     );
+
+    // 自动清理被封禁的账号（包括重置时间已过但配额仍为 0% 的账号）
+    const bannedAccounts = config.accounts.filter((account) => account.isBanned);
+    if (bannedAccounts.length > 0) {
+      const currentId = config.accounts[config.currentIndex]?.id;
+      config.accounts = config.accounts.filter((account) => !account.isBanned);
+      // 重新定位 currentIndex
+      const newIndex = config.accounts.findIndex((account) => account.id === currentId);
+      config.currentIndex = newIndex >= 0 ? newIndex : 0;
+      for (const banned of bannedAccounts) {
+        console.log(`已自动移除失效账号: ${formatAccountName(banned)}（重置时间已过，配额未恢复）`);
+      }
+    }
+
     if (config.currentIndex >= config.accounts.length) {
       config.currentIndex = 0;
     }

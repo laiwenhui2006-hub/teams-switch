@@ -34,8 +34,16 @@ export interface Account {
 
 export interface TeamsConfig {
   currentIndex: number;
-  lastSwitchTime: number; // 上次切换账号的时间戳（ms），持久化以跨重启保留冷却状态
+  cooldownUntil: number; // 冷却截止时间戳（ms），在此之前不允许切换
   accounts: Account[];
+}
+
+// 冷却时长常量（秒），切换后随机取 [MIN, MAX] 即完成
+export const COOLDOWN_MIN_SEC = 60;
+export const COOLDOWN_MAX_SEC = 90;
+
+export function randomCooldownMs(): number {
+  return (COOLDOWN_MIN_SEC + Math.floor(Math.random() * (COOLDOWN_MAX_SEC - COOLDOWN_MIN_SEC + 1))) * 1000;
 }
 
 const OPENCODE_DIR = path.join(os.homedir(), ".opencode");
@@ -216,7 +224,7 @@ function normalizeAccount(value: unknown, index: number): Account | null {
 function normalizeConfig(value: unknown): TeamsConfig {
   const record = toRecord(value);
   if (!record) {
-    return { currentIndex: 0, lastSwitchTime: 0, accounts: [] };
+    return { currentIndex: 0, cooldownUntil: 0, accounts: [] };
   }
 
   const rawAccounts = Array.isArray(record.accounts) ? record.accounts : [];
@@ -228,9 +236,15 @@ function normalizeConfig(value: unknown): TeamsConfig {
   const boundedIndex =
     accounts.length === 0 ? 0 : Math.max(0, Math.min(rawCurrentIndex, accounts.length - 1));
 
+  // 兼容旧字段 lastSwitchTime → 转为 cooldownUntil
+  const cooldownUntil = Math.max(
+    0,
+    Math.floor(toNumberValue(record.cooldownUntil) ?? 0),
+  );
+
   return {
     currentIndex: boundedIndex,
-    lastSwitchTime: Math.max(0, Math.floor(toNumberValue(record.lastSwitchTime) ?? 0)),
+    cooldownUntil,
     accounts,
   };
 }
@@ -246,14 +260,14 @@ function ensureConfigDir() {
 export function loadConfig(): TeamsConfig {
   ensureConfigDir();
   if (!fs.existsSync(CONFIG_FILE)) {
-    return { currentIndex: 0, lastSwitchTime: 0, accounts: [] };
+    return { currentIndex: 0, cooldownUntil: 0, accounts: [] };
   }
   try {
     const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
     return normalizeConfig(JSON.parse(raw));
   } catch (err) {
     console.error("[Teams Switch] Failed to load config, returning default.", err);
-    return { currentIndex: 0, lastSwitchTime: 0, accounts: [] };
+    return { currentIndex: 0, cooldownUntil: 0, accounts: [] };
   }
 }
 
@@ -582,6 +596,32 @@ export async function ensureFreshAccount(account: Account): Promise<Account> {
 }
 
 /**
+ * 检查配额窗口是否"过期未恢复"：
+ * - remainingPercent 为 0（已耗尽）
+ * - 当前时间已经超过 resetAt（重置时间已过）
+ * 满足以上条件说明该配额窗口理论上应已重置，但实际配额仍为 0%，
+ * 账号大概率已被封禁或永久失效。
+ */
+export function isQuotaWindowExpiredAndUnrecovered(window?: QuotaWindow): boolean {
+  if (window?.remainingPercent !== 0) return false;
+  if (window?.resetAt === undefined) return false;
+  return Math.floor(Date.now() / 1000) > window.resetAt;
+}
+
+/**
+ * 检查账号是否有任一配额窗口的重置时间已过（无论 remainingPercent 是否为 0）。
+ * 用于在 isValid=false 时判断是否值得重新 sync 一次。
+ */
+export function hasAnyResetTimePassed(account: Account): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const hourlyReset = account.quota?.hourly?.resetAt;
+  const weeklyReset = account.quota?.weekly?.resetAt;
+  if (hourlyReset !== undefined && now > hourlyReset) return true;
+  if (weeklyReset !== undefined && now > weeklyReset) return true;
+  return false;
+}
+
+/**
  * 检查缓存的配额窗口是否已经稳定无需刷新：
  * - 该窗口 remainingPercent 为 0（即已耗尽）
  * - 当前时间尚未到达 resetAt（下次重置时间还没到）
@@ -625,6 +665,17 @@ export async function syncAccountStatus(
     planType: normalizePlanType(metadata?.planType) ?? nextAccount.planType,
     quota: metadata?.quota ?? nextAccount.quota,
   };
+
+  // 重置时间已过但配额仍为 0%，判定为永久失效（封号/Token 不可恢复）
+  const expiredHourly = isQuotaWindowExpiredAndUnrecovered(mergedAccount.quota?.hourly);
+  const expiredWeekly = isQuotaWindowExpiredAndUnrecovered(mergedAccount.quota?.weekly);
+  if (expiredHourly || expiredWeekly) {
+    return {
+      ...mergedAccount,
+      isBanned: true,
+      isValid: false,
+    };
+  }
 
   return {
     ...mergedAccount,
