@@ -559,6 +559,8 @@ export function findNextEligibleAccountIndex(accounts: Account[], currentIndex: 
   return -1;
 }
 
+const refreshPromises = new Map<string, Promise<Account>>();
+
 export async function ensureFreshAccount(account: Account): Promise<Account> {
   const nextAccount: Account = {
     ...account,
@@ -577,22 +579,35 @@ export async function ensureFreshAccount(account: Account): Promise<Account> {
     return nextAccount;
   }
 
-  const refreshedAuth = await refreshAccessToken(nextAccount.refreshToken);
-  if (!refreshedAuth?.access) {
-    return nextAccount;
+  if (refreshPromises.has(account.id)) {
+    return refreshPromises.get(account.id)!;
   }
 
-  return {
-    ...nextAccount,
-    accessToken: refreshedAuth.access,
-    refreshToken: refreshedAuth.refresh ?? nextAccount.refreshToken,
-    accountId: refreshedAuth.accountId ?? extractAccountIdFromAccessToken(refreshedAuth.access),
-    expiresAt:
-      (refreshedAuth.expires !== undefined ? Math.floor(refreshedAuth.expires / 1000) : undefined) ??
-      extractExpiryFromAccessToken(refreshedAuth.access),
-    email: extractEmailFromAccessToken(refreshedAuth.access) ?? nextAccount.email,
-    planType: normalizePlanType(extractPlanTypeFromAccessToken(refreshedAuth.access)) ?? nextAccount.planType,
-  };
+  const refreshPromise = (async () => {
+    const refreshedAuth = await refreshAccessToken(nextAccount.refreshToken!);
+    if (!refreshedAuth?.access) {
+      return nextAccount;
+    }
+
+    return {
+      ...nextAccount,
+      accessToken: refreshedAuth.access,
+      refreshToken: refreshedAuth.refresh ?? nextAccount.refreshToken,
+      accountId: refreshedAuth.accountId ?? extractAccountIdFromAccessToken(refreshedAuth.access),
+      expiresAt:
+        (refreshedAuth.expires !== undefined ? Math.floor(refreshedAuth.expires / 1000) : undefined) ??
+        extractExpiryFromAccessToken(refreshedAuth.access),
+      email: extractEmailFromAccessToken(refreshedAuth.access) ?? nextAccount.email,
+      planType: normalizePlanType(extractPlanTypeFromAccessToken(refreshedAuth.access)) ?? nextAccount.planType,
+    };
+  })();
+
+  refreshPromises.set(account.id, refreshPromise);
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromises.delete(account.id);
+  }
 }
 
 /**

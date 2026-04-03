@@ -240,6 +240,14 @@ export function setupInterceptor(client?: OpencodeClient) {
     const freshConfig = loadConfig();
     const now = Date.now();
     if (now < freshConfig.cooldownUntil) {
+      // 检查当前请求使用的 Token 是否与配置中最新的 Token 不同
+      // 如果不同，说明其他并发请求已经完成了切换，当前请求应该使用新 Token 重试
+      const currentConfigToken = freshConfig.accounts[freshConfig.currentIndex]?.accessToken;
+      if (currentConfigToken && currentToken !== currentConfigToken) {
+        showNotification(`冷却期中，检测到 Token 已更新，使用新 Token 重传请求...`, "info");
+        return originalFetch(input, buildRetryInit(init, currentConfigToken));
+      }
+
       const remainSec = Math.ceil((freshConfig.cooldownUntil - now) / 1000);
       showNotification(`冷却期中，${remainSec}秒后允许再次切换。返回原始响应。`, "warning");
       return response;
@@ -314,16 +322,30 @@ export function setupInterceptor(client?: OpencodeClient) {
     }
 
     // ─── 429: 额度耗尽 → 切换 → 立即重传（P2: 不阻塞） ───
-    showNotification(`拦截到 429，当前账号额度已耗尽。`, "warning");
-    const nextToken = drainAndSwitch(freshConfig);
-    freshConfig.cooldownUntil = Date.now() + randomCooldownMs();
-    saveConfig(freshConfig);
-    if (!nextToken) {
-      showNotification("所有账号均已耗尽，无法切换。请补充新授权。", "error");
-      return response;
+    if (response.status === 429) {
+      const bodyText = await response.clone().text();
+      const lowerBody = bodyText.toLowerCase();
+      // 检查是否为频率限制 (Rate Limit) 而非额度耗尽 (Quota Exceeded)
+      const isRateLimit = lowerBody.includes("too many requests") && !lowerBody.includes("quota") && !lowerBody.includes("exceeded your current quota");
+
+      if (isRateLimit) {
+        showNotification(`拦截到 429 (请求太频繁)，等待客户端重试。`, "warning");
+        return response;
+      }
+
+      showNotification(`拦截到 429，当前账号额度已耗尽。`, "warning");
+      const nextToken = drainAndSwitch(freshConfig);
+      freshConfig.cooldownUntil = Date.now() + randomCooldownMs();
+      saveConfig(freshConfig);
+      if (!nextToken) {
+        showNotification("所有账号均已耗尽，无法切换。请补充新授权。", "error");
+        return response;
+      }
+      showNotification("已切换至新账号，正在重传请求...", "info");
+      return originalFetch(input, buildRetryInit(init, nextToken));
     }
-    showNotification("已切换至新账号，正在重传请求...", "info");
-    return originalFetch(input, buildRetryInit(init, nextToken));
+
+    return response;
   };
 }
 

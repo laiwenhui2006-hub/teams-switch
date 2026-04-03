@@ -112,6 +112,25 @@ async function main() {
 
   if (cmd === "status") {
     const config = loadConfig();
+
+    // 自动检查系统默认授权文件中的 token 是否在池中，如果不在则自动加入
+    const auth = readOpencodeAuth("openai");
+    if (auth && auth.access) {
+      const exists = config.accounts.some((account) => account.accessToken === auth.access);
+      if (!exists) {
+        const accountId = auth.accountId || `account-${Date.now()}`;
+        console.log(`检测到新的系统授权，正在自动添加到账号池: [${accountId}]...`);
+        try {
+          const newAccount = await syncAccountStatus(createAccountFromAuth(accountId, auth));
+          config.accounts.push(newAccount);
+          saveConfig(config);
+          console.log(`成功添加新账号 [${accountId}]。`);
+        } catch (err) {
+          console.error(`自动添加新账号失败: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
     config.accounts = await Promise.all(
       config.accounts.map((account) => syncAccountStatus(account, { forceRefreshQuota: true })),
     );
