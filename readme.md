@@ -10,6 +10,7 @@
 - **手动切换命令**：支持强制切换，手动切换时同样跳过额度不足 5% 的账号
 - **冷却机制**：切换后等待 60~90 秒冷却期，防止频繁触发
 - **封号检测**：自动识别并标记永久封禁账号（401 banned / 402 deactivated）
+- **GitHub Copilot 支持**：新增 Copilot 请求拦截与头策略层，支持 `passthrough` / `strict` / `interval` 三种模式，不影响现有 Codex 逻辑。
 
 ## 安装
 
@@ -51,6 +52,39 @@ opencode teams clean [all|名称]
 2. 发起请求时自动注入当前账号的 Bearer Token
 3. 响应为 401/429/402 时，自动切换到下一个健康账号并重试
 4. 冷却期内不重复切换
+
+## GitHub Copilot 支持
+
+插件新增了对 GitHub Copilot 请求的拦截与头策略层，通过 OpenCode 的 `chat.headers` hook 生效。Copilot 的运行时计数状态单独存放在内存中，不复用现有账号池、冷却、健康度逻辑。
+
+### 模式说明
+
+- **`strict` (默认)**：仅当明确检测到 agent/internal continuation 时才设置 `x-initiator=agent`，否则保留 `user` 或不覆盖。
+- **`passthrough`**：完全不修改 `x-initiator`，仅补齐基础头。
+- **`interval` (实验性)**：按 N 次 1 次“用户发起”节奏改写。例如 `billingInterval=5`，则每 5 次请求保留为 `user`，其余写为 `agent`。**注意：此模式为实验性功能，默认关闭，可能存在被服务端拒绝的风险。**
+
+### 配置示例
+
+在 `~/.opencode/teams-switch.json` 中添加 `copilot` 配置块：
+
+```json
+{
+  "copilot": {
+    "enabled": true,
+    "mode": "strict",
+    "billingInterval": 5,
+    "setRequiredHeaders": true,
+    "forceOverrideInitiator": false,
+    "debug": false
+  }
+}
+```
+
+### 回滚方式
+
+如果遇到问题，可以通过以下方式回滚：
+- 设置 `copilot.enabled=false` 禁用 Copilot 拦截。
+- 或者设置 `mode="passthrough"` 仅补齐基础头，不修改 `x-initiator`。
 
 ## License
 
