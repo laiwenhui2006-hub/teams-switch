@@ -154,3 +154,17 @@ test("Copilot interval mode", async () => {
   await applyCopilotHeaders({ provider: { id: "github-copilot" }, sessionID, messages: [{ role: "user" }] }, output4);
   assert.equal(output4.headers["x-initiator"], "agent");
 });
+test("Coexistence with existing Codex flow", async () => {
+  const { applyCopilotHeaders } = await import("./copilot.js");
+  const { setupInterceptor, teardownInterceptor } = await import("./interceptor.js");
+
+  // Ensure interceptor can be setup without crashing
+  setupInterceptor();
+  
+  // Non-copilot provider should not throw or modify headers
+  const output1 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "openai" } }, output1);
+  assert.equal(Object.keys(output1.headers).length, 0);
+
+  teardownInterceptor();
+});
