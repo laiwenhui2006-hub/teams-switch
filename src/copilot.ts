@@ -10,6 +10,18 @@ export function isCopilotProvider(input: unknown): boolean {
   const provider = (input as any).provider;
   return provider?.id === "github-copilot";
 }
+function classifyStrictInitiator(input: unknown): "agent" | "user" | "unknown" {
+  const messages = (input as any).messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return "unknown";
+  }
+
+  const isAgentCall = messages.some(
+    (msg) => msg.role === "assistant" || msg.role === "tool"
+  );
+
+  return isAgentCall ? "agent" : "user";
+}
 
 export async function applyCopilotHeaders(
   input: unknown,
@@ -39,5 +51,14 @@ export async function applyCopilotHeaders(
     return;
   }
 
-  // Strategy logic will go here
+  if (copilotConfig.mode === "passthrough") {
+    return;
+  }
+
+  if (copilotConfig.mode === "strict") {
+    const initiator = classifyStrictInitiator(input);
+    if (initiator !== "unknown") {
+      output.headers["x-initiator"] = initiator;
+    }
+  }
 }

@@ -85,3 +85,35 @@ test("Copilot provider detection and header strategy core", async () => {
   await applyCopilotHeaders({ provider: { id: "github-copilot" }, model: { api: { npm: "@ai-sdk/github-copilot" } } }, output4);
   assert.equal(output4.headers["x-initiator"], undefined);
 });
+test("Copilot passthrough and strict modes", async () => {
+  const { applyCopilotHeaders } = await import("./copilot.js");
+  const { saveConfig, loadConfig } = await import("./config.js");
+
+  // Setup config for passthrough
+  const config = loadConfig();
+  config.copilot.mode = "passthrough";
+  saveConfig(config);
+
+  const output1 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" } }, output1);
+  assert.equal(output1.headers["x-initiator"], undefined);
+
+  // Setup config for strict
+  config.copilot.mode = "strict";
+  saveConfig(config);
+
+  // Strict mode: user message
+  const output2 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, messages: [{ role: "user" }] }, output2);
+  assert.equal(output2.headers["x-initiator"], "user");
+
+  // Strict mode: agent message
+  const output3 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, messages: [{ role: "user" }, { role: "assistant" }] }, output3);
+  assert.equal(output3.headers["x-initiator"], "agent");
+
+  // Strict mode: tool message
+  const output4 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, messages: [{ role: "user" }, { role: "tool" }] }, output4);
+  assert.equal(output4.headers["x-initiator"], "agent");
+});
