@@ -44,3 +44,15 @@ test("Copilot session state tracking", async () => {
   state1 = getCopilotSessionState(session1);
   assert.equal(state1.requestCount, 0);
 });
+test("Copilot config defaults", async () => {
+  const { loadConfig } = await import("./config.js");
+  const config = loadConfig();
+  
+  assert.ok(config.copilot);
+  assert.equal(config.copilot.enabled, true);
+  assert.equal(config.copilot.mode, "strict");
+  assert.equal(config.copilot.billingInterval, 5);
+  assert.equal(config.copilot.setRequiredHeaders, true);
+  assert.equal(config.copilot.forceOverrideInitiator, false);
+  assert.equal(config.copilot.debug, false);
+});

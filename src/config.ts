@@ -32,10 +32,20 @@ export interface Account {
   isBanned?: boolean; // 永久封号标记（无法通过 refresh 恢复）
 }
 
+export interface CopilotConfig {
+  enabled: boolean;
+  mode: "passthrough" | "strict" | "interval";
+  billingInterval: number;
+  setRequiredHeaders: boolean;
+  forceOverrideInitiator: boolean;
+  debug: boolean;
+}
+
 export interface TeamsConfig {
   currentIndex: number;
   cooldownUntil: number; // 冷却截止时间戳（ms），在此之前不允许切换
   accounts: Account[];
+  copilot: CopilotConfig;
 }
 
 // 冷却时长常量（秒），切换后随机取 [MIN, MAX] 即完成
@@ -221,10 +231,25 @@ function normalizeAccount(value: unknown, index: number): Account | null {
   };
 }
 
+function normalizeCopilotConfig(value: unknown): CopilotConfig {
+  const record = toRecord(value);
+  const modeStr = toStringValue(record?.mode);
+  const mode = (modeStr === "passthrough" || modeStr === "strict" || modeStr === "interval") ? modeStr : "strict";
+  
+  return {
+    enabled: toBooleanValue(record?.enabled) ?? true,
+    mode,
+    billingInterval: toNumberValue(record?.billingInterval) ?? 5,
+    setRequiredHeaders: toBooleanValue(record?.setRequiredHeaders) ?? true,
+    forceOverrideInitiator: toBooleanValue(record?.forceOverrideInitiator) ?? false,
+    debug: toBooleanValue(record?.debug) ?? false,
+  };
+}
+
 function normalizeConfig(value: unknown): TeamsConfig {
   const record = toRecord(value);
   if (!record) {
-    return { currentIndex: 0, cooldownUntil: 0, accounts: [] };
+    return { currentIndex: 0, cooldownUntil: 0, accounts: [], copilot: normalizeCopilotConfig(null) };
   }
 
   const rawAccounts = Array.isArray(record.accounts) ? record.accounts : [];
@@ -246,6 +271,7 @@ function normalizeConfig(value: unknown): TeamsConfig {
     currentIndex: boundedIndex,
     cooldownUntil,
     accounts,
+    copilot: normalizeCopilotConfig(record.copilot),
   };
 }
 
@@ -260,14 +286,14 @@ function ensureConfigDir() {
 export function loadConfig(): TeamsConfig {
   ensureConfigDir();
   if (!fs.existsSync(CONFIG_FILE)) {
-    return { currentIndex: 0, cooldownUntil: 0, accounts: [] };
+    return normalizeConfig(null);
   }
   try {
     const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
     return normalizeConfig(JSON.parse(raw));
   } catch (err) {
     console.error("[Teams Switch] Failed to load config, returning default.", err);
-    return { currentIndex: 0, cooldownUntil: 0, accounts: [] };
+    return normalizeConfig(null);
   }
 }
 
