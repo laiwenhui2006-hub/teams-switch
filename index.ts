@@ -6,7 +6,11 @@ export const TeamsSwitchPlugin: Plugin = async (_input: PluginInput): Promise<Ho
   // 插件加载时启动全局 Fetch 拦截，用于自动重传失效及限流的 Codex API 请求
   setupInterceptor(_input.client);
 
-  return {};
+  return {
+    "chat.headers": async (input, output) => {
+      // TODO: delegate to copilot header handler
+    },
+  };
 };
 
 export default TeamsSwitchPlugin;
