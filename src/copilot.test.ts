@@ -45,7 +45,11 @@ test("Copilot session state tracking", async () => {
   assert.equal(state1.requestCount, 0);
 });
 test("Copilot config defaults", async () => {
-  const { loadConfig } = await import("./config.js");
+  const { loadConfig, saveConfig } = await import("./config.js");
+  
+  // Reset config to defaults
+  saveConfig({ currentIndex: 0, cooldownUntil: 0, accounts: [], copilot: undefined as any });
+
   const config = loadConfig();
   
   assert.ok(config.copilot);
@@ -115,5 +119,38 @@ test("Copilot passthrough and strict modes", async () => {
   // Strict mode: tool message
   const output4 = { headers: {} as Record<string, string> };
   await applyCopilotHeaders({ provider: { id: "github-copilot" }, messages: [{ role: "user" }, { role: "tool" }] }, output4);
+  assert.equal(output4.headers["x-initiator"], "agent");
+});
+test("Copilot interval mode", async () => {
+  const { applyCopilotHeaders } = await import("./copilot.js");
+  const { saveConfig, loadConfig } = await import("./config.js");
+  const { clearCopilotSessionState } = await import("./copilot-state.js");
+
+  const config = loadConfig();
+  config.copilot.mode = "interval";
+  config.copilot.billingInterval = 3;
+  saveConfig(config);
+
+  const sessionID = "test-interval-session";
+  clearCopilotSessionState(sessionID);
+
+  // Request 1: count=1, not multiple of 3 -> agent
+  const output1 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, sessionID, messages: [{ role: "user" }] }, output1);
+  assert.equal(output1.headers["x-initiator"], "agent");
+
+  // Request 2: count=2, not multiple of 3 -> agent
+  const output2 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, sessionID, messages: [{ role: "user" }] }, output2);
+  assert.equal(output2.headers["x-initiator"], "agent");
+
+  // Request 3: count=3, multiple of 3 -> user (fallback to strict logic for user message)
+  const output3 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, sessionID, messages: [{ role: "user" }] }, output3);
+  assert.equal(output3.headers["x-initiator"], "user");
+
+  // Request 4: count=4, not multiple of 3 -> agent
+  const output4 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, sessionID, messages: [{ role: "user" }] }, output4);
   assert.equal(output4.headers["x-initiator"], "agent");
 });

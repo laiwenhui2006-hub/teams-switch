@@ -1,4 +1,5 @@
 import { loadConfig } from "./config.js";
+import { getCopilotSessionState, incrementCopilotRequestCount } from "./copilot-state.js";
 
 const COPILOT_HEADERS = {
   "Editor-Version": "vscode/1.96.2",
@@ -10,6 +11,7 @@ export function isCopilotProvider(input: unknown): boolean {
   const provider = (input as any).provider;
   return provider?.id === "github-copilot";
 }
+
 function classifyStrictInitiator(input: unknown): "agent" | "user" | "unknown" {
   const messages = (input as any).messages;
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -55,10 +57,25 @@ export async function applyCopilotHeaders(
     return;
   }
 
-  if (copilotConfig.mode === "strict") {
-    const initiator = classifyStrictInitiator(input);
-    if (initiator !== "unknown") {
-      output.headers["x-initiator"] = initiator;
+  let initiator = classifyStrictInitiator(input);
+
+  if (copilotConfig.mode === "interval") {
+    const sessionID = (input as any).sessionID;
+    if (sessionID && copilotConfig.billingInterval > 1) {
+      incrementCopilotRequestCount(sessionID);
+      const state = getCopilotSessionState(sessionID);
+      
+      if (state.requestCount % copilotConfig.billingInterval !== 0) {
+        initiator = "agent";
+      }
     }
+  }
+
+  if (initiator !== "unknown") {
+    output.headers["x-initiator"] = initiator;
+  }
+
+  if (copilotConfig.debug) {
+    console.log(`[Copilot] mode=${copilotConfig.mode} initiator=${initiator} session=${(input as any).sessionID}`);
   }
 }
