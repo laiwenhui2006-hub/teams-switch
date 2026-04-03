@@ -8,7 +8,8 @@ export const TeamsSwitchPlugin: Plugin = async (_input: PluginInput): Promise<Ho
 
   return {
     "chat.headers": async (input, output) => {
-      // TODO: delegate to copilot header handler
+      const { applyCopilotHeaders } = await import("./src/copilot.js");
+      await applyCopilotHeaders(input, output);
     },
   };
 };

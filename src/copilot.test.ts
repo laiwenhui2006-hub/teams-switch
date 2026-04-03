@@ -56,3 +56,32 @@ test("Copilot config defaults", async () => {
   assert.equal(config.copilot.forceOverrideInitiator, false);
   assert.equal(config.copilot.debug, false);
 });
+test("Copilot provider detection and header strategy core", async () => {
+  const { isCopilotProvider, applyCopilotHeaders } = await import("./copilot.js");
+
+  // Test isCopilotProvider
+  assert.equal(isCopilotProvider({ provider: { id: "github-copilot" } }), true);
+  assert.equal(isCopilotProvider({ provider: { id: "openai" } }), false);
+  assert.equal(isCopilotProvider({}), false);
+
+  // Test applyCopilotHeaders no-op for non-copilot
+  const output1 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "openai" } }, output1);
+  assert.equal(Object.keys(output1.headers).length, 0);
+
+  // Test applyCopilotHeaders sets required headers
+  const output2 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" } }, output2);
+  assert.equal(output2.headers["Editor-Version"], "vscode/1.96.2");
+  assert.equal(output2.headers["Copilot-Integration-Id"], "vscode-chat");
+
+  // Test applyCopilotHeaders preserves existing x-initiator if forceOverrideInitiator=false
+  const output3 = { headers: { "x-initiator": "user" } as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" } }, output3);
+  assert.equal(output3.headers["x-initiator"], "user");
+
+  // Test applyCopilotHeaders skips override if npm is @ai-sdk/github-copilot
+  const output4 = { headers: {} as Record<string, string> };
+  await applyCopilotHeaders({ provider: { id: "github-copilot" }, model: { api: { npm: "@ai-sdk/github-copilot" } } }, output4);
+  assert.equal(output4.headers["x-initiator"], undefined);
+});
