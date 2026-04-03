@@ -162,8 +162,33 @@ async function main() {
   }
 
   if (cmd === "clean") {
+    const target = process.argv[3];
     const config = loadConfig();
     const before = config.accounts.length;
+
+    if (target === "all") {
+      config.accounts = [];
+      config.currentIndex = 0;
+      saveConfig(config);
+      console.log(`已清理所有账号，共 ${before} 个`);
+      return;
+    }
+
+    if (target) {
+      config.accounts = config.accounts.filter(
+        (account) => account.id !== target && formatAccountName(account) !== target && account.email !== target
+      );
+      const removed = before - config.accounts.length;
+      if (removed > 0) {
+        config.currentIndex = 0;
+        saveConfig(config);
+        console.log(`已清理账号 [${target}]，剩余账号数: ${config.accounts.length}`);
+      } else {
+        console.log(`未找到匹配 [${target}] 的账号`);
+      }
+      return;
+    }
+
     config.accounts = config.accounts.filter((account) => !account.isBanned);
     const removed = before - config.accounts.length;
     if (removed > 0) {
@@ -181,7 +206,7 @@ async function main() {
   console.log("  opencode teams add [名称]   # 从当前 opencode auth 中提取 openai (codex) 的授权存入池");
   console.log("  opencode teams status       # 查看账号池状态及健康度");
   console.log("  opencode teams switch       # 手动强制切换至池中下一个账号");
-  console.log("  opencode teams clean        # 清理所有被封禁的账号（isBanned=true）");
+  console.log("  opencode teams clean [all|名称] # 清理指定账号，all为清空，不传则清理被封禁账号");
 }
 
 void main().catch((error: unknown) => {

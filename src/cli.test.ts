@@ -174,3 +174,51 @@ test("switch command treats weekly below 5 percent as ineligible and still picks
 
   assert.match(stdout, /已手动切换至账号: acct-next-ok/);
 });
+
+test("clean command removes banned accounts by default", async () => {
+  const { stdout } = await runCliWithConfig({
+    config: {
+      currentIndex: 0,
+      cooldownUntil: 0,
+      accounts: [
+        { id: "acct-1", accessToken: "token-1", addedAt: 0, isValid: true, isBanned: true },
+        { id: "acct-2", accessToken: "token-2", addedAt: 0, isValid: true, isBanned: false },
+      ],
+    },
+    args: ["clean"],
+  });
+
+  assert.match(stdout, /已清理 1 个被封禁账号，剩余账号数: 1/);
+});
+
+test("clean command with 'all' removes all accounts", async () => {
+  const { stdout } = await runCliWithConfig({
+    config: {
+      currentIndex: 0,
+      cooldownUntil: 0,
+      accounts: [
+        { id: "acct-1", accessToken: "token-1", addedAt: 0, isValid: true, isBanned: true },
+        { id: "acct-2", accessToken: "token-2", addedAt: 0, isValid: true, isBanned: false },
+      ],
+    },
+    args: ["clean", "all"],
+  });
+
+  assert.match(stdout, /已清理所有账号，共 2 个/);
+});
+
+test("clean command with specific name removes that account", async () => {
+  const { stdout } = await runCliWithConfig({
+    config: {
+      currentIndex: 0,
+      cooldownUntil: 0,
+      accounts: [
+        { id: "acct-1", accessToken: "token-1", addedAt: 0, isValid: true, isBanned: false },
+        { id: "acct-2", accessToken: "token-2", addedAt: 0, isValid: true, isBanned: false, email: "test@example.com" },
+      ],
+    },
+    args: ["clean", "test"],
+  });
+
+  assert.match(stdout, /已清理账号 \[test\]，剩余账号数: 1/);
+});

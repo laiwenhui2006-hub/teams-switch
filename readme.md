@@ -33,8 +33,8 @@ opencode teams switch
 # 从当前 opencode auth 中提取 openai (codex) 授权添加入池
 opencode teams add [名称]
 
-# 清理被永久封禁的账号
-opencode teams clean
+# 清理指定账号，all为清空，不传则清理被封禁账号
+opencode teams clean [all|名称]
 ```
 
 ## 账号选择规则
